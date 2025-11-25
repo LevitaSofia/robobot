@@ -1,0 +1,10 @@
+streamlit
+ccxt
+pandas
+pandas_ta
+plotly
+flask
+openai
+python-dotenv
+requests
+pyTelegramBotAPI

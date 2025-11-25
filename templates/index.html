@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Crypto Bot 2.1 (Com IA)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body class="dark-mode">
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar de Configuração -->
+            <div class="col-md-3 sidebar p-4">
+                <h3 class="mb-4">🤖 Bot Config</h3>
+                
+                <div id="connectionStatus" class="alert alert-secondary py-2 text-center mb-3">
+                    <small>🔌 Desconectado</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">API Key</label>
+                    <input type="password" id="apiKey" class="form-control bg-dark text-light" placeholder="Binance API Key">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Secret Key</label>
+                    <input type="password" id="secretKey" class="form-control bg-dark text-light" placeholder="Binance Secret Key">
+                </div>
+
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="liveModeToggle">
+                    <label class="form-check-label text-warning" for="liveModeToggle">Usar Conta REAL (Cuidado!)</label>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Perfil de Risco</label>
+                    <select id="riskMode" class="form-select bg-dark text-light">
+                        <option value="conservative">🛡️ Prevenido (RSI < 30)</option>
+                        <option value="moderate">⚖️ Moderado (RSI < 35)</option>
+                        <option value="aggressive">🚀 Audacioso (RSI < 40)</option>
+                    </select>
+                </div>
+
+                <hr>
+
+                <h5 class="mb-3">📱 Telegram (Opcional)</h5>
+                <div class="mb-3">
+                    <label class="form-label">Bot Token</label>
+                    <input type="password" id="telegramToken" class="form-control bg-dark text-light" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Chat ID</label>
+                    <input type="text" id="telegramChatId" class="form-control bg-dark text-light" placeholder="-100123456789">
+                </div>
+
+                <hr>
+
+                <div class="mb-3">
+                    <label class="form-label">Moedas</label>
+                    <div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;">
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="BTC/USDT" id="btc" checked>
+                            <label class="form-check-label" for="btc">BTC/USDT</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="ETH/USDT" id="eth">
+                            <label class="form-check-label" for="eth">ETH/USDT</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="SOL/USDT" id="sol">
+                            <label class="form-check-label" for="sol">SOL/USDT</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="BNB/USDT" id="bnb">
+                            <label class="form-check-label" for="bnb">BNB/USDT</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="XRP/USDT" id="xrp">
+                            <label class="form-check-label" for="xrp">XRP/USDT</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="DOGE/USDT" id="doge">
+                            <label class="form-check-label" for="doge">DOGE/USDT</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input pair-checkbox" type="checkbox" value="ADA/USDT" id="ada">
+                            <label class="form-check-label" for="ada">ADA/USDT</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button id="btnSave" class="btn btn-primary">Salvar Configuração</button>
+                    <button id="btnToggle" class="btn btn-danger">PARADO (Clique p/ Iniciar)</button>
+                </div>
+
+                <div class="mt-4">
+                    <h5>Logs do Sistema</h5>
+                    <div id="logsArea" class="logs-box">
+                        <!-- Logs aparecerão aqui -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Área Principal -->
+            <div class="col-md-9 main-content p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>Painel de Controle</h1>
+                    <div class="d-flex gap-3">
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Lucro Hoje</span>
+                            <h4 id="dailyProfitDisplay" class="text-success">$0.00</h4>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Lucro Total</span>
+                            <h4 id="totalProfitDisplay" class="text-info">$0.00</h4>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Saldo (USDT)</span>
+                            <h2 id="balanceDisplay">$0.00</h2>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Toast Container -->
+                <div class="toast-container position-fixed bottom-0 end-0 p-3">
+                    <div id="liveToast" class="toast bg-dark text-white" role="alert" aria-live="assertive" aria-atomic="true">
+                        <div class="toast-header bg-secondary text-white">
+                            <strong class="me-auto">🤖 Notificação</strong>
+                            <small>Agora</small>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+                        </div>
+                        <div class="toast-body" id="toastBody">
+                            Ação executada!
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card bg-dark text-light">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-dark table-hover align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Sinal</th>
+                                        <th>Moeda</th>
+                                        <th>Carteira</th>
+                                        <th>Preço Atual</th>
+                                        <th>RSI (14)</th>
+                                        <th>Banda Inf.</th>
+                                        <th>Banda Sup.</th>
+                                        <th>Lucro Aberto</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="marketTableBody">
+                                    <!-- Linhas serão inseridas via JS -->
+                                    <tr>
+                                        <td colspan="8" class="text-center text-muted">Aguardando dados...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
