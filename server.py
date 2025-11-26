@@ -8,6 +8,7 @@ import os
 import requests
 import openai
 import telebot
+from duckduckgo_search import DDGS
 from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify, request
 from datetime import datetime
@@ -18,6 +19,11 @@ load_dotenv()
 app = Flask(__name__)
 
 CONFIG_FILE = 'config.json'
+
+def sanitize_value(value):
+    if value is None:
+        return ""
+    return str(value).strip()
 
 def load_config_from_file():
     if os.path.exists(CONFIG_FILE):
@@ -64,6 +70,31 @@ def save_trade(trade):
     except Exception as e:
         print(f"Erro ao salvar trade: {e}")
 
+    trade_volume = trade.get("amount", 0)
+    trade_value = trade.get("buy_price", 0) * trade_volume
+    bot_state["total_traded_value"] = bot_state.get("total_traded_value", 0.0) + abs(trade_value)
+    bot_state["trade_volume_by_symbol"].setdefault(trade["symbol"], 0.0)
+    bot_state["trade_volume_by_symbol"][trade["symbol"]] += trade_volume
+
+ACTIVE_TRADES_FILE = 'active_trades.json'
+TRADE_AMOUNT_USDT = 11.0  # Valor fixo em USDT por operação
+
+def load_active_trades():
+    if os.path.exists(ACTIVE_TRADES_FILE):
+        try:
+            with open(ACTIVE_TRADES_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_active_trades():
+    try:
+        with open(ACTIVE_TRADES_FILE, 'w') as f:
+            json.dump(active_trades, f, indent=4)
+    except Exception as e:
+        print(f"Erro ao salvar trades ativos: {e}")
+
 def get_profits():
     trades = load_trades()
     total = sum(t.get('profit_usdt', 0) for t in trades)
@@ -77,11 +108,11 @@ def get_profits():
 saved_config = load_config_from_file()
 
 # Prioridade: .env > config.json > vazio
-env_api_key = os.getenv("BINANCE_API_KEY")
-env_secret_key = os.getenv("BINANCE_SECRET_KEY")
-env_telegram_token = os.getenv("TELEGRAM_TOKEN")
-env_telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
-env_openai_key = os.getenv("OPENAI_API_KEY")
+env_api_key = sanitize_value(os.getenv("BINANCE_API_KEY"))
+env_secret_key = sanitize_value(os.getenv("BINANCE_SECRET_KEY"))
+env_telegram_token = sanitize_value(os.getenv("TELEGRAM_TOKEN"))
+env_telegram_chat_id = sanitize_value(os.getenv("TELEGRAM_CHAT_ID"))
+env_openai_key = sanitize_value(os.getenv("OPENAI_API_KEY"))
 
 bot_state = {
     "running": False,
@@ -91,13 +122,33 @@ bot_state = {
     "pairs": saved_config.get("pairs", []), 
     "is_live": saved_config.get("is_live", False),
     "risk_mode": saved_config.get("risk_mode", "conservative"), # conservative, moderate, aggressive
-    "telegram_token": env_telegram_token if env_telegram_token else saved_config.get("telegram_token", ""),
-    "telegram_chat_id": env_telegram_chat_id if env_telegram_chat_id else saved_config.get("telegram_chat_id", ""),
+    "telegram_token": env_telegram_token if env_telegram_token else sanitize_value(saved_config.get("telegram_token", "")),
+    "telegram_chat_id": env_telegram_chat_id if env_telegram_chat_id else sanitize_value(saved_config.get("telegram_chat_id", "")),
     "openai_key": env_openai_key,
     "balance": 0.0,
+    "previous_balance": 0.0,
+    "total_traded_value": 0.0,
+    "trade_volume_by_symbol": {},
+    "brl_rate": 5.0,
+    "brl_rate_updated": 0,
     "logs": [],
     "notifications": [] # Fila de notificações para o frontend
 }
+
+def refresh_brl_rate(force=False):
+    last = bot_state.get("brl_rate_updated", 0)
+    if not force and time.time() - last < 300:
+        return
+    try:
+        response = requests.get("https://economia.awesomeapi.com.br/json/last/USDT-BRL", timeout=5)
+        data = response.json()
+        rate = float(data.get("USDTBRL", {}).get("bid", bot_state.get("brl_rate", 5.0)))
+        bot_state["brl_rate"] = rate
+        bot_state["brl_rate_updated"] = time.time()
+    except Exception as e:
+        log(f"Erro ao atualizar cotação BRL: {e}")
+
+refresh_brl_rate(force=True)
 
 # Dados em tempo real das moedas
 # Estrutura: { 'BTC/USDT': { 'price': 0, 'rsi': 0, 'status': 'Neutro', 'pnl': 0, 'action': '-' } }
@@ -106,6 +157,30 @@ market_data = {}
 # Histórico de Trades e Estado
 # Estrutura: { 'BTC/USDT': { 'status': 'BOUGHT', 'price': 50000 } }
 active_trades = {} 
+
+# --- FUNÇÕES AUXILIARES (INTERNET) ---
+
+def get_fear_and_greed():
+    try:
+        r = requests.get("https://api.alternative.me/fng/", timeout=5)
+        data = r.json()
+        item = data['data'][0]
+        return f"{item['value_classification']} (Índice: {item['value']})"
+    except:
+        return "Indisponível"
+
+def search_web_info(query):
+    try:
+        with DDGS() as ddgs:
+            # Busca notícias recentes sobre o tema
+            results = list(ddgs.text(f"crypto news {query}", region="br-pt", timelimit="d", max_results=3))
+            if not results:
+                return "Nenhuma notícia recente encontrada."
+            
+            summary = "\n".join([f"- {r['title']}: {r['body']}" for r in results])
+            return summary
+    except Exception as e:
+        return f"Erro na busca web: {e}"
 
 # --- FUNÇÕES DO ROBÔ ---
 
@@ -203,24 +278,68 @@ def telegram_polling():
             bot.reply_to(message, "⚠️ Configure a chave da OpenAI para eu poder responder.")
             return
 
+        # Notifica que está "digitando" (processando)
+        bot.send_chat_action(message.chat.id, 'typing')
+
         try:
-            # Prepara contexto para a IA
-            contexto = f"""
-            Você é um assistente de trading cripto. Responda de forma curta, direta e amigável (use emojis).
+            # 1. Coleta dados básicos
+            brl = bot_state.get("brl_rate", 5.0)
+            investido_brl = bot_state.get("total_invested_usdt", 0.0) * brl
+            atual_brl = bot_state.get("total_wallet_value_usdt", 0.0) * brl
+            lucro_brl = atual_brl - investido_brl
             
-            DADOS ATUAIS DO SISTEMA:
-            - Saldo Atual: ${bot_state['balance']:.2f} USDT
+            # 2. Verifica se precisa de busca na internet
+            web_context = ""
+            keywords_busca = ["previsão", "previsao", "tendencia", "noticia", "analise", "mercado", "bitcoin", "btc", "futuro", "subir", "cair"]
+            if any(k in user_text.lower() for k in keywords_busca):
+                bot.send_chat_action(message.chat.id, 'typing') # Renova status
+                fng = get_fear_and_greed()
+                news = search_web_info(user_text)
+                web_context = f"""
+                DADOS DA INTERNET (EM TEMPO REAL):
+                - Fear & Greed Index: {fng}
+                - Notícias/Buscas Recentes:
+                {news}
+                """
+
+            # 3. Carrega histórico recente
+            closed_trades = load_trades()
+            recent_history = closed_trades[-15:] if closed_trades else []
+            history_str = json.dumps(recent_history, indent=2)
+
+            # 4. Monta o Prompt
+            contexto = f"""
+            Você é um Sócio Digital e Analista Sênior de Criptomoedas.
+            Seu objetivo é dar conselhos estratégicos, analisar o mercado e explicar os resultados.
+            
+            DADOS FINANCEIROS (EM REAIS R$):
+            - Total Investido: R$ {investido_brl:.2f}
+            - Valor Atual: R$ {atual_brl:.2f}
+            - Lucro/Prejuízo: R$ {lucro_brl:.2f}
+            
+            DADOS TÉCNICOS:
+            - Saldo Livre: ${bot_state['balance']:.2f} USDT
+            - Cotação Dólar: R$ {brl:.2f}
             - Moedas Monitoradas: {', '.join(bot_state['pairs'])}
-            - Status do Robô: {'LIGADO' if bot_state['running'] else 'DESLIGADO'}
             - Trades Ativos: {json.dumps(active_trades)}
-            - Últimos Logs: {bot_state['logs'][:5]}
+            
+            {web_context}
+            
+            HISTÓRICO RECENTE:
+            {history_str}
+            
+            INSTRUÇÕES:
+            - Use os dados da internet (se houver) para embasar suas previsões.
+            - Se o usuário pedir previsão, cite o 'Fear & Greed Index' e notícias.
+            - Seja realista, mas otimista. Use emojis.
+            - Se houver prejuízo, explique tecnicamente e sugira melhorias.
             
             PERGUNTA DO USUÁRIO: {user_text}
             """
 
             client = openai.OpenAI(api_key=bot_state["openai_key"])
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo", # Pode alterar para gpt-4-turbo se tiver acesso
                 messages=[{"role": "user", "content": contexto}]
             )
             
@@ -278,12 +397,17 @@ def process_data(exchange, symbol):
 def bot_loop():
     log("Sistema iniciado. Aguardando configuração...")
     
+    global active_trades
+    active_trades = load_active_trades()
+    
     while True:
         if bot_state["running"] and bot_state["pairs"]:
+            refresh_brl_rate()
             exchange = get_exchange()
             if exchange:
                 try:
                     # Atualiza Saldo
+                    bot_state["previous_balance"] = bot_state["balance"]
                     balance = exchange.fetch_balance()
                     bot_state["balance"] = balance['total'].get('USDT', 0.0)
                     
@@ -292,8 +416,15 @@ def bot_loop():
                     
                     bot_state["connected"] = True
                     
+                    # Totais para cálculo de investimento
+                    iter_invested_usdt = 0.0
+                    iter_wallet_value_usdt = 0.0
+                    
                     for symbol in bot_state["pairs"]:
                         price, rsi, lower_band, upper_band = process_data(exchange, symbol)
+                        asset = symbol.split('/')[0]
+                        coin_balance = balance['total'].get(asset, 0.0)
+                        wallet_value = coin_balance * price
                         
                         # Inicializa dados se não existir
                         if symbol not in market_data:
@@ -311,6 +442,10 @@ def bot_loop():
                         if symbol in active_trades and active_trades[symbol]['status'] == 'BOUGHT':
                             is_bought = True
                             buy_price = active_trades[symbol]['price']
+                            
+                            # Acumula totais
+                            iter_invested_usdt += coin_balance * buy_price
+                            iter_wallet_value_usdt += coin_balance * price
 
                         # --- ESTRATÉGIA DE ENTRADA (Double Confirmation) ---
                         # RSI < 30 E Preço < Banda Inferior
@@ -337,17 +472,18 @@ def bot_loop():
                                 signal_color = "green"
                                 status = "🟢 OPORTUNIDADE"
                                 
-                                amount_to_spend = 11.0 # Valor fixo de 11 USDT (Mínimo Binance + Taxas)
+                                amount_to_spend = TRADE_AMOUNT_USDT
                                 amount_coin = amount_to_spend / price
                                 
                                 try:
                                     exchange.create_market_buy_order(symbol, amount_coin)
                                     active_trades[symbol] = {'status': 'BOUGHT', 'price': price}
+                                    save_active_trades()
                                     action = "COMPRA (Double Conf.) 🟢"
-                                    msg = f"🚀 COMPRA executada em {symbol} a ${price}"
+                                    msg = f"🚀 COMPRA: {amount_coin:.5f} {symbol} (Total: ${amount_to_spend:.2f} USDT) | Preço Unitário: ${price:.2f}"
                                     log(msg)
                                     bot_state["notifications"].append({"type": "success", "msg": msg, "time": datetime.now().timestamp()})
-                                    send_telegram_message(f"🟢 *COMPRA REALIZADA*\n\nMoeda: `{symbol}`\nPreço: `${price}`\nEstratégia: Double Confirmation")
+                                    send_telegram_message(f"🟢 *COMPRA REALIZADA*\n\nMoeda: `{symbol}`\nQtd: `{amount_coin:.5f}`\nValor Gasto: `${amount_to_spend:.2f} USDT`\nPreço Unitário: `${price:.2f}`\nEstratégia: Double Confirmation")
                                     
                                     # Atualiza saldo localmente
                                     bot_state["balance"] -= amount_to_spend
@@ -377,7 +513,9 @@ def bot_loop():
                                 coin_balance = balance['total'].get(symbol.split('/')[0], 0.0)
                                 if coin_balance * price > 10:
                                     exchange.create_market_sell_order(symbol, coin_balance)
-                                    active_trades[symbol] = {'status': 'SOLD', 'price': price}
+                                    if symbol in active_trades:
+                                        del active_trades[symbol]
+                                    save_active_trades()
                                     
                                     # Calcula Lucro em USDT
                                     profit_usdt = (price - buy_price) * coin_balance
@@ -421,11 +559,18 @@ def bot_loop():
                             'wallet_status': wallet_status,
                             'signal_color': signal_color,
                             'pnl': pnl_str,
-                            'action': action
+                            'action': action,
+                            'wallet_amount': coin_balance,
+                            'wallet_value': wallet_value,
+                            'wallet_value_brl': wallet_value * bot_state.get("brl_rate", 1.0)
                         }
                         
                         # Log periódico apenas para debug se necessário (opcional, para não poluir)
                         # log(f"Analisando {symbol}: RSI {rsi:.1f} | Preço {price:.2f} | BB_Inf {lower_band:.2f}")
+                    
+                    # Atualiza estado global com totais da iteração
+                    bot_state["total_invested_usdt"] = iter_invested_usdt
+                    bot_state["total_wallet_value_usdt"] = iter_wallet_value_usdt
                         
                 except Exception as e:
                     bot_state["connected"] = False
@@ -463,12 +608,22 @@ def get_status():
     # Pega notificações recentes (limpa as antigas da memória se quiser, ou o front filtra)
     # Vamos enviar todas e o front mostra só as novas
     
+    brl_rate = bot_state.get("brl_rate", 0.0)
     return jsonify({
         'running': bot_state["running"],
         'connected': bot_state.get("connected", False),
         'balance': bot_state["balance"],
+        'balance_brl': bot_state["balance"] * brl_rate,
+        'previous_balance': bot_state.get("previous_balance", 0.0),
         'total_profit': total_profit,
         'daily_profit': daily_profit,
+        'total_traded_value': bot_state.get("total_traded_value", 0.0),
+        'total_traded_value_brl': bot_state.get("total_traded_value", 0.0) * brl_rate,
+        'total_invested_usdt': bot_state.get("total_invested_usdt", 0.0),
+        'total_invested_brl': bot_state.get("total_invested_usdt", 0.0) * brl_rate,
+        'total_wallet_value_usdt': bot_state.get("total_wallet_value_usdt", 0.0),
+        'total_wallet_value_brl': bot_state.get("total_wallet_value_usdt", 0.0) * brl_rate,
+        'brl_rate': brl_rate,
         'market_data': market_data,
         'logs': bot_state["logs"],
         'notifications': bot_state["notifications"][-5:] # Envia as últimas 5
@@ -494,8 +649,8 @@ def update_config():
     if 'pairs' in data: bot_state["pairs"] = data['pairs']
     if 'is_live' in data: bot_state["is_live"] = data['is_live']
     if 'risk_mode' in data: bot_state["risk_mode"] = data['risk_mode']
-    if 'telegram_token' in data: bot_state["telegram_token"] = data['telegram_token']
-    if 'telegram_chat_id' in data: bot_state["telegram_chat_id"] = data['telegram_chat_id']
+    if 'telegram_token' in data: bot_state["telegram_token"] = sanitize_value(data['telegram_token'])
+    if 'telegram_chat_id' in data: bot_state["telegram_chat_id"] = sanitize_value(data['telegram_chat_id'])
     
     # Salva no arquivo sempre que atualizar
     if 'api_key' in data or 'secret_key' in data or 'pairs' in data or 'is_live' in data or 'telegram_token' in data or 'risk_mode' in data:

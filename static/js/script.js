@@ -12,6 +12,11 @@ async function updateDashboard() {
         document.getElementById('balanceDisplay').innerText = `$${data.balance.toFixed(2)}`;
         document.getElementById('totalProfitDisplay').innerText = `$${data.total_profit.toFixed(2)}`;
         document.getElementById('dailyProfitDisplay').innerText = `$${data.daily_profit.toFixed(2)}`;
+        document.getElementById('previousBalanceDisplay').innerText = `$${(data.previous_balance || 0).toFixed(2)}`;
+        document.getElementById('totalTradedDisplay').innerText = `$${(data.total_traded_value || 0).toFixed(2)}`;
+        document.getElementById('balanceBrlDisplay').innerText = `R$${(data.balance_brl || 0).toFixed(2)}`;
+        document.getElementById('totalTradedBrlDisplay').innerText = `R$${(data.total_traded_value_brl || 0).toFixed(2)}`;
+        document.getElementById('brlRateDisplay').innerText = `${(data.brl_rate || 0).toFixed(2)}`;
         
         // Cor do Lucro Diário
         const dailyEl = document.getElementById('dailyProfitDisplay');
@@ -82,10 +87,17 @@ async function updateDashboard() {
                 let walletClass = 'text-muted';
                 if (info.wallet_status.includes('EM CARTEIRA')) walletClass = 'text-primary fw-bold';
 
+                const walletAmount = info.wallet_amount || 0;
+                const walletValue = info.wallet_value || 0;
+                const walletValueBrl = info.wallet_value_brl || 0;
+
                 tr.innerHTML = `
                     <td class="fs-4 text-center">${signalDot}</td>
                     <td><span class="badge bg-secondary">${symbol}</span></td>
                     <td class="${walletClass}"><small>${info.wallet_status}</small></td>
+                    <td>${walletAmount.toFixed(4)}</td>
+                    <td class="text-info">$${walletValue.toFixed(2)}</td>
+                    <td class="text-warning">R$${walletValueBrl.toFixed(2)}</td>
                     <td>$${info.price.toFixed(4)}</td>
                     <td>${info.rsi.toFixed(2)}</td>
                     <td class="text-info">$${info.lower_band.toFixed(4)}</td>

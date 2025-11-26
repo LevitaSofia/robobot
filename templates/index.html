@@ -108,7 +108,7 @@
             <div class="col-md-9 main-content p-4">
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h1>Painel de Controle</h1>
-                    <div class="d-flex gap-3">
+                    <div class="d-flex gap-3 flex-wrap">
                         <div class="balance-card text-center">
                             <span class="text-muted small">Lucro Hoje</span>
                             <h4 id="dailyProfitDisplay" class="text-success">$0.00</h4>
@@ -120,6 +120,26 @@
                         <div class="balance-card text-center">
                             <span class="text-muted small">Saldo (USDT)</span>
                             <h2 id="balanceDisplay">$0.00</h2>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Saldo Anterior</span>
+                            <h5 id="previousBalanceDisplay">$0.00</h5>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Valor Negociado</span>
+                            <h5 id="totalTradedDisplay" class="text-warning">$0.00</h5>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Saldo (BRL)</span>
+                            <h5 id="balanceBrlDisplay">R$0.00</h5>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Negociado (BRL)</span>
+                            <h5 id="totalTradedBrlDisplay" class="text-warning">R$0.00</h5>
+                        </div>
+                        <div class="balance-card text-center">
+                            <span class="text-muted small">Câmbio USDT-BRL</span>
+                            <h6 id="brlRateDisplay">0.00</h6>
                         </div>
                     </div>
                 </div>
@@ -147,6 +167,9 @@
                                         <th>Sinal</th>
                                         <th>Moeda</th>
                                         <th>Carteira</th>
+                                        <th>Qtd. Carteira</th>
+                                        <th>Valor Carteira</th>
+                                        <th>Valor Carteira (BRL)</th>
                                         <th>Preço Atual</th>
                                         <th>RSI (14)</th>
                                         <th>Banda Inf.</th>
@@ -158,7 +181,7 @@
                                 <tbody id="marketTableBody">
                                     <!-- Linhas serão inseridas via JS -->
                                     <tr>
-                                        <td colspan="8" class="text-center text-muted">Aguardando dados...</td>
+                                        <td colspan="12" class="text-center text-muted">Aguardando dados...</td>
                                     </tr>
                                 </tbody>
                             </table>
